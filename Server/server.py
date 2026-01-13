@@ -1,15 +1,18 @@
+import random
 import socket
 import time
 import threading
 
-from shared.protocol import pack_offer, UDP_PORT
+from shared.protocol import *
+
+
 
 
 BROADCAST_IP = "<broadcast>"
 OFFER_INTERVAL_SEC = 1.0
 
 
-def start_offer_broadcast(server_name: str, tcp_port: int, stop_event: threading.Event):
+def start_offer_broadcast(server_name, tcp_port, stop_event):
     """
     Sends UDP broadcast offer messages once every second.
     """
@@ -26,6 +29,26 @@ def start_offer_broadcast(server_name: str, tcp_port: int, stop_event: threading
         time.sleep(OFFER_INTERVAL_SEC)
 
     udp_sock.close()
+
+
+def recv_exact(conn, n):
+    data = b""
+    while len(data) < n:
+        chunk = conn.recv(n - len(data))
+        if not chunk:
+            raise ConnectionError("client disconnected")
+        data += chunk
+    return data
+
+
+def new_deck():
+    deck = [(rank, suit) for suit in range(4) for rank in range(1, 14)]
+    random.shuffle(deck)
+    return deck
+
+
+def hand_sum(hand):
+    return sum(card_value(rank) for rank, _ in hand)
 
 
 def run_tcp_server(server_name: str):
@@ -57,12 +80,31 @@ def run_tcp_server(server_name: str):
             conn, addr = tcp_sock.accept()
             print(f"[TCP] Connection from {addr}")
 
-            # For now: just read and print raw bytes length
-            data = conn.recv(1024)
-            print(f"[TCP] Received {len(data)} bytes")
+            # Read request (some teams send '\n' after request per example :contentReference[oaicite:18]{index=18})
+            req = recv_exact(conn, REQUEST_SIZE)
+            parsed = unpack_request(req)
+            if parsed is None:
+                print("[TCP] Invalid request, closing")
+                conn.close()
+                continue
 
-            conn.sendall(b"ACK\n")
+            # Optional newline: אם מגיע ב-recv הבא, זה בסדר להתעלם
+            conn.settimeout(0.05)
+            try:
+                extra = conn.recv(1)
+            except Exception:
+                pass
+            conn.settimeout(None)
+
+            rounds, client_name = parsed
+            print(f"[TCP] Client '{client_name}' requested {rounds} rounds")
+
+            for i in range(rounds):
+                print(f"[GAME] Round {i + 1}/{rounds}")
+                play_round(conn)
+
             conn.close()
+
 
     except KeyboardInterrupt:
         print("\nShutting down server...")
@@ -70,8 +112,62 @@ def run_tcp_server(server_name: str):
         stop_event.set()
         tcp_sock.close()
 
+def play_round(conn: socket.socket):
+    deck = new_deck()
+
+    player = [deck.pop(), deck.pop()]
+    dealer = [deck.pop(), deck.pop()]  # dealer[1] hidden until dealer turn :contentReference[oaicite:13]{index=13}
+
+    # Initial deal: send player 2 + dealer 1 visible :contentReference[oaicite:14]{index=14}
+    for r, s in player:
+        conn.sendall(pack_server_payload(RESULT_NOT_OVER, r, s))
+    conn.sendall(pack_server_payload(RESULT_NOT_OVER, dealer[0][0], dealer[0][1]))
+
+    # Player turn
+    while True:
+        if hand_sum(player) > 21:
+            # player bust => dealer wins :contentReference[oaicite:15]{index=15}
+            conn.sendall(pack_server_payload(RESULT_LOSS, 0, 0))
+            return
+
+        decision_bytes = recv_exact(conn, CLIENT_PAYLOAD_SIZE)
+        decision = unpack_client_payload(decision_bytes)
+        if decision is None:
+            raise ValueError("invalid client payload")
+
+        if decision == "Stand":
+            break
+
+        # Hittt
+        card = deck.pop()
+        player.append(card)
+        conn.sendall(pack_server_payload(RESULT_NOT_OVER, card[0], card[1]))
+
+    # Dealer turn: reveal hidden, then hit until total >=17 or bust :contentReference[oaicite:16]{index=16}
+    conn.sendall(pack_server_payload(RESULT_NOT_OVER, dealer[1][0], dealer[1][1]))
+
+    while hand_sum(dealer) < 17:
+        card = deck.pop()
+        dealer.append(card)
+        conn.sendall(pack_server_payload(RESULT_NOT_OVER, card[0], card[1]))
+        if hand_sum(dealer) > 21:
+            conn.sendall(pack_server_payload(RESULT_WIN, 0, 0))
+            return
+
+    # Decide winner :contentReference[oaicite:17]{index=17}
+    p_total = hand_sum(player)
+    d_total = hand_sum(dealer)
+
+    if p_total > d_total:
+        conn.sendall(pack_server_payload(RESULT_WIN, 0, 0))
+    elif d_total > p_total:
+        conn.sendall(pack_server_payload(RESULT_LOSS, 0, 0))
+    else:
+        conn.sendall(pack_server_payload(RESULT_TIE, 0, 0))
+
+
+
 
 if __name__ == "__main__":
-    # TODO: put your real team name here (max 32 chars)
-    TEAM_NAME = "TeamShay"
+    TEAM_NAME = "GOAT"
     run_tcp_server(TEAM_NAME)
