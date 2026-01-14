@@ -187,6 +187,6 @@ def card_to_str(rank, suit):
         s = "♠️"
     else:
         s ="?"
-    return f"{r}{s}"
+    return f"{r} {s}"
 
 
