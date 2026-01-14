@@ -125,7 +125,7 @@ def handle_client(conn: socket.socket, addr):
         except Exception:
             pass
         finally:
-            conn.settimeout(25.0)
+            conn.settimeout(None)
 
         rounds, client_name = parsed
         print(f"[TCP] Client '{client_name}' from {addr} requested {rounds} rounds")
