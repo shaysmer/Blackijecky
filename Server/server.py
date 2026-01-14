@@ -169,6 +169,17 @@ def handle_client(conn, addr):
             print(f"[TCP] Invalid request from {addr}, closing")
             return
 
+        # Client may append newline; try to consume a single extra byte if present
+        # (keeps compatibility with clients that send "request + \\n")
+        try:
+            conn.settimeout(0.05)
+            _ = conn.recv(1)
+        except Exception:
+            pass
+        finally:
+            # After handshake, remove timeout to let gameplay proceed normally
+            conn.settimeout(None)
+
         rounds, client_name = parsed
         print(f"[TCP] Client '{client_name}' from {addr} requested {rounds} rounds")
 

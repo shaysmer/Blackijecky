@@ -165,7 +165,7 @@ def pack_client_payload(decision):
     """
     # Decision is fixed-length 5 bytes (protocol requirement)
     if decision not in ("Hittt", "Stand"):
-        raise ValueError("decision must be 'Hit' or 'Stand'")
+        raise ValueError("decision must be 'Hittt' or 'Stand'")
     return struct.pack(CLIENT_PAYLOAD_FORMAT, MAGIC_COOKIE, PAYLOAD_TYPE, decision.encode("ascii"))
 
 
